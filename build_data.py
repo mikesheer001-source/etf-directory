@@ -80,6 +80,27 @@ def load_aum():
         print(f'Warning: AUM feed unavailable: {e}')
     return assets,dates
 
+def load_stocks(raw):
+    # Only equity symbols in the current US exchange directory.
+    listed={r['Symbol']:r['Security Name'] for r in csv.DictReader(io.StringIO(raw),delimiter='|') if r.get('ETF')=='N' and r.get('Test Issue')=='N' and r.get('Nasdaq Traded')=='Y'}
+    result={}
+    try:
+        req=urllib.request.Request('https://raw.githubusercontent.com/MeridianAlgo/TickerAtlas/main/data/All_Stocks.csv',headers={'User-Agent':'ETFDirectory/1.0'})
+        with urllib.request.urlopen(req,timeout=60) as response:
+            data=response.read().decode('utf-8-sig')
+        for row in csv.DictReader(io.StringIO(data)):
+            ticker=row.get('ticker','').strip().upper()
+            if ticker not in listed or row.get('quote_type','').upper()!='EQUITY' or row.get('currency','').upper() not in ('USD',''):continue
+            try:
+                cap=float(row.get('market_cap',''))
+                if not 0<cap<float('inf'):cap=None
+            except (TypeError,ValueError):cap=None
+            result[ticker]={'ticker':ticker,'name':row.get('company_name') or listed[ticker],'market_cap':cap,'date':row.get('updated_at_utc'),'source':'TickerAtlas / Yahoo Finance'}
+        print(f'Stock references: {len(result)}, market caps: {sum(s["market_cap"] is not None for s in result.values())}')
+    except Exception as e:
+        print(f'Warning: stock feed unavailable: {e}')
+    return result
+
 def main():
     assets,dates=load_aum()
     p=BASE/'assets.csv'
@@ -95,7 +116,7 @@ def main():
         fund['aum_date'],fund['aum_source']=dates.get(fund['ticker'],(None,None))
     if len(funds)<1000:raise ValueError(f'Only {len(funds)} listings: refusing incomplete snapshot')
     stamp=next((line.split('|')[0] for line in raw.splitlines() if line.startswith('File Creation Time')),None)
-    data={'updated':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'sourceDate':stamp,'funds':funds}
+    data={'updated':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'sourceDate':stamp,'funds':funds,'stocks':load_stocks(raw)}
     (BASE/'data.json').write_text(json.dumps(data,ensure_ascii=False,separators=(',',':'),allow_nan=False),encoding='utf-8')
     print(f'Loaded {len(funds)} listings, {sum(f["kind"]!="other" for f in funds)} estimated leveraged or inverse')
 if __name__=='__main__':
