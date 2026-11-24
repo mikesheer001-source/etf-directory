@@ -46,11 +46,11 @@ function render(){
  const extras=funds.filter(f=>f.group&&!f.special&&(f.multiple>1||f.multiple<0)&&!mult.includes(f.multiple)&&(!hideNoInverse||inverseGroups.has(f.group))&&(!q||matches(f))).sort(cmp);
  filtered.push(...extras);
  const frag=document.createDocumentFragment();
- for(const row of rows){
+ for(const [rowIndex,row] of rows.entries()){
   const tr=document.createElement('tr');
   for(let i=0;i<6;i++){
    const td=document.createElement('td'),c=row.cells[i];
-   if(i===0){const label=document.createElement('span');label.className='rowlabel';label.textContent=row.name.replace(/^Unmapped: /,'');td.append(label)}
+   if(i===0){const label=document.createElement('span');label.className='rowlabel';label.textContent=(rowIndex+1)+'. '+row.name.replace(/^Unmapped: /,'');td.append(label)}
    const div=document.createElement('div');div.className=c.length?'tiles':'empty';
    if(!c.length)div.textContent='—';else for(const f of c.sort(cmp))div.append(tile(f));
    td.append(div);tr.append(td)
