@@ -8,7 +8,13 @@ def leverage(ticker,name):
     n=name.lower()
     # Do not treat short duration or short maturity bond funds as inverse.
     if re.search(r'\b(?:ultra)?short[- ](?:term|duration|maturity|dated)\b',n): return None
-    m=re.search(r'(?<![\w.])([+\-−]?\d+(?:\.\d+)?)\s*[x×]\b',n)
+    m=re.search(r'(?<![\w.])([+\-−]?\d+(?:\.\d+)?)\s*(?:x\b|×|times\b)',n)
+    if not m:
+        m=re.search(r'(?<![\w.])([+\-−]?\d+(?:\.\d+)?)\s*%',n) if re.search(r'\b(daily|leveraged|inverse)\b',n) else None
+        if m and abs(float(m.group(1).replace('−','-')))>=100:
+            val=float(m.group(1).replace('−','-'))/100
+            return -abs(val) if val<0 or re.search(r'\b(inverse|bear|short)\b',n) else val if val>1 else None
+        m=None
     bearish=bool(re.search(r'\b(?:inverse|bear|short)\b|ultrashort|ultrapro short',n))
     if m:
         value=float(m.group(1).replace('−','-'))
@@ -51,16 +57,42 @@ def parse(raw,assets):
         kind='inverse' if lev is not None and lev<0 else 'long' if lev is not None and lev>1 else 'other'
         result[ticker]={'ticker':ticker,'name':name,'exchange':EXCH.get(row['Listing Exchange'],row['Listing Exchange']),'kind':kind,'multiple':lev,'category':category(name,ticker),'aum':assets.get(ticker)}
     return sorted(result.values(),key=lambda f:f['ticker'])
-def main():
+def load_aum():
     assets={}
+    dates={}
+    try:
+        req=urllib.request.Request('https://tickerinside.com/api/v1/funds.json',headers={'User-Agent':'ETFDirectory/1.0 (+https://github.com/mikesheer001-source/etf-directory)'})
+        with urllib.request.urlopen(req,timeout=50) as response: doc=json.load(response)
+        for key in ['funds','sec_funds','sponsor_funds','prospectus_funds','bond_funds','multi_asset_funds','derivative_funds','trust_funds']:
+            for f in doc.get(key,[]):
+                ticker=f.get('t')
+                if not ticker:continue
+                value=f.get('aum_b')
+                if isinstance(value,(float,int)) and 0<value<float('inf'):
+                    amount=value*1e9; date=doc.get('as_of'); source='TickerInside market data'
+                else:
+                    amount=f.get('net_assets'); date=f.get('report_date'); source='TickerInside reported net assets'
+                if not isinstance(amount,(float,int)) or not 0<amount<float('inf'):continue
+                if ticker not in assets or (date or '')>(dates[ticker][0] or ''):
+                    assets[ticker]=amount; dates[ticker]=(date,source)
+        print(f'AUM for {len(assets)} funds from TickerInside')
+    except Exception as e:
+        print(f'Warning: AUM feed unavailable: {e}')
+    return assets,dates
+
+def main():
+    assets,dates=load_aum()
     p=BASE/'assets.csv'
     if p.exists():
         for row in csv.DictReader(p.open()):
             try:
                 v=float(row['aum_usd'])
-                if 0<=v<float('inf'):assets[row['ticker'].strip().upper()]=v
+                if 0<=v<float('inf'):
+                    t=row['ticker'].strip().upper();assets[t]=v;dates[t]=(row.get('updated_date'),'Local CSV')
             except (ValueError,KeyError):continue
     raw=download();funds=parse(raw,assets)
+    for fund in funds:
+        fund['aum_date'],fund['aum_source']=dates.get(fund['ticker'],(None,None))
     if len(funds)<1000:raise ValueError(f'Only {len(funds)} listings: refusing incomplete snapshot')
     stamp=next((line.split('|')[0] for line in raw.splitlines() if line.startswith('File Creation Time')),None)
     data={'updated':datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),'sourceDate':stamp,'funds':funds}
